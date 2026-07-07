@@ -1,0 +1,23 @@
+[project]
+name = "squarecloud-restorer"
+version = "0.1.0"
+description = "This project helps you restore Snapshots from Square Cloud, uploading the Snapshot and retrieving the old and new ID and the name of the application/database."
+authors = [
+    {name = "Jhonatan-Jeferson", email = "jhonatanjefersonoliveira@gmail.com"}
+]
+readme = 
+requires-python = ">=3.14"
+dependencies = [
+]
+license-files = [
+    "LICENSE"
+]
+
+[tool.poetry] 
+packages = [{include = "squarecloud_restorer", from = "src"}]
+
+[project.scripts]
+squarecloud_restorer = "squarecloud_restorer:"
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
