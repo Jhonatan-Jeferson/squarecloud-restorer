@@ -5,7 +5,7 @@ description = "This project helps you restore Snapshots from Square Cloud, uploa
 authors = [
     {name = "Jhonatan-Jeferson", email = "jhonatanjefersonoliveira@gmail.com"}
 ]
-readme = 
+readme = README.md
 requires-python = ">=3.14"
 dependencies = [
 ]
