@@ -82,7 +82,7 @@ class HTTPResponse:
     def read(self, buffer_size: int=0) -> bytes|None:
         if buffer_size == 0:
             gen = cast(Generator[bytes, int|None, None], self._gen)
-            self._data += gen.send(8*1024*1024)
+            self._data += gen.send(5*1024*1024)
             for data in gen:
                 self._data += data
             self._socket.close()
