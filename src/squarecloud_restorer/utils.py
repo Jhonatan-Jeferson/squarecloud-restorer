@@ -17,6 +17,6 @@ def get_api_key(f: Callable[P, R]) -> Callable[P, R]:
     return wrapper
 
 
-def sort_snapshots(snapshots: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    sorted_list = sorted(snapshots, key=lambda snapshot: snapshot["modified"])
+def sort_snapshots(snapshots: list[dict[str, Any]], reverse: bool = False) -> list[dict[str, Any]]:
+    sorted_list = sorted(snapshots, key=lambda snapshot: snapshot["modified"], reverse=reverse)
     return sorted_list
