@@ -1,6 +1,7 @@
 import sys
 import importlib
-from typing import Any, Callable, Self, Optional
+import traceback
+from typing import Callable, Self
 
 
 cmd = importlib.import_module(".commands",package="squarecloud_restorer")
@@ -16,7 +17,7 @@ class RestorerClient:
 
     def error_handler(self, error: Exception):
         self.exit_code = 1
-        print(str(error))
+        traceback.print_exc()
 
     def run(self, cli_args: list[str]):
         """This is the main entry of the CLI"""
