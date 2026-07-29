@@ -6,7 +6,6 @@ from dataclasses import dataclass
 from typing import Any, Generator, Literal, cast, TYPE_CHECKING
 from ssl import create_default_context, SSLSocket
 
-from squarecloud_restorer.core import data
 from .. import __version__
 
 
@@ -37,6 +36,10 @@ class URL:
     @classmethod
     def upload_database(cls):
         return cls('api.squarecloud.app', '/v2/databases')
+    
+    @classmethod
+    def user(cls):
+        return cls('api.squarecloud.app', '/v2/users/me')
 
 class HTTPResponse:
     def __init__(self, socket: SSLSocket):
@@ -69,7 +72,9 @@ class HTTPResponse:
         self._data += raw_data
         for line in header_lines[1:]:
             k, _, v = line.partition(b':')
-            self._headers[k.decode('utf-8')] = v.strip(b'').decode('utf-8')
+            key = k.decode('utf-8').strip()
+            value = v.strip().decode('utf-8')
+            self._headers[key] = value
 
     def _read(self, buffer_size: int) -> Generator[bytes, int|None, None]:
         while True:
@@ -107,28 +112,29 @@ class HTTPRequest:
         self.headers: dict[str, Any] = {
             "Host": url.host,
             "User-Agent": f"squarecloud-restorer/{__version__}",
-            "Accept": "application/json, application/octet-stream"
+            "Accept": "application/json, application/octet-stream",
+            "Connection": "close"
         } | headers
         self.data = data
         self.url = url
         self.method = method.upper()
 
-    def _create_connection(self, endpoint: str) -> None:
+    def _create_connection(self) -> None:
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.connect((self.url+endpoint, 443))
+        sock.connect((self.url.host, 443))
         ctx = create_default_context()
-        sock = ctx.wrap_socket(sock)
+        sock = ctx.wrap_socket(sock, server_hostname=self.url.host)
         self._socket = sock
 
     def _parse_headers(self) -> bytes:
-        headers: list[bytes] = [
-            f'{self.method.upper()} {self.url.endpoint}'.encode('utf-8'),
-        ]
-        for k,v in self.headers.items():
-            headers.append(f'{k}: {v}'.encode('utf-8'))
-        headers.append(b"Connection: close\r\n")
-        result = b"\r\n".join(headers)
-        return result
+        request_line = f"{self.method} {self.url.endpoint} HTTP/1.1"
+        lines: list[str] = [request_line]
+        if 'Host' not in self.headers:
+            self.headers['Host'] = self.url.host
+        for k, v in self.headers.items():
+            lines.append(f"{k}: {v}")
+        result = "\r\n".join(lines) + "\r\n\r\n"
+        return result.encode('utf-8')
 
     def _read_large_data(self) -> Generator[bytes, None, None]:
         data = cast(BufferedReader, self.data)
@@ -141,32 +147,48 @@ class HTTPRequest:
         boundary = uuid4().hex
         form_data_struct: list[bytes] = [
             f'--{boundary}'.encode(),
-            f'Content-Disposition: form-data; name="file"; filename="application.zip"'.encode(),
+            b'Content-Disposition: form-data; name="file"; filename="application.zip"',
             b'Content-Type: application/octet-stream',
             b'\r\n',
         ]
         form_data = b'\r\n'.join(form_data_struct)
         return (boundary, form_data)
 
-    def request(self, endpoint: str ="") -> HTTPResponse:
-        self._create_connection(endpoint)
+    def request(self) -> HTTPResponse:
+        self._create_connection()
         sock = cast(SSLSocket, self._socket)
         try:
             if isinstance(self.data, BufferedReader):
                 boundary, form_data = self._parse_form_data()
-                form_data_end = f'\r\n--{boundary}--\r\n\r\n'.encode()
-                length = len(form_data) + len(form_data_end)
-                self.headers['Content-Length'] += length
+                form_data_end = f'\r\n--{boundary}--\r\n'.encode()
+                self.headers['Content-Type'] = f'multipart/form-data; boundary={boundary}'
+                try:
+                    current_pos = cast(BufferedReader, self.data).tell()
+                    cast(BufferedReader, self.data).seek(0, 2)
+                    file_size = cast(BufferedReader, self.data).tell()
+                    cast(BufferedReader, self.data).seek(current_pos)
+                except Exception:
+                    file_size = 0
+                length = len(form_data) + file_size + len(form_data_end)
+                existing = self.headers.get('Content-Length', 0)
+                if isinstance(existing, int):
+                    self.headers['Content-Length'] = existing + length
+                else:
+                    try:
+                        self.headers['Content-Length'] = int(existing) + length
+                    except Exception:
+                        self.headers['Content-Length'] = length
                 headers = self._parse_headers()
-                sock.sendall(headers+form_data)
+                sock.sendall(headers + form_data)
                 for chunk in self._read_large_data():
                     sock.sendall(chunk)
                 sock.sendall(form_data_end)
             else:
-                headers = self._parse_headers()
                 data = json.dumps(self.data).encode('utf-8')
-                headers += f"\r\nContent-Length: {len(data)}".encode('utf-8')
-                sock.sendall(headers+data)
+                self.headers.setdefault('Content-Type', 'application/json')
+                self.headers['Content-Length'] = len(data)
+                headers = self._parse_headers()
+                sock.sendall(headers + data)
         except Exception as e:
             sock.close()
             raise e
