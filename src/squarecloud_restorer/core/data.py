@@ -14,21 +14,26 @@ class BaseSnapshot:
         raise Exception('Not implemented')
 
 class ApplicationSnapshot(BaseSnapshot):
-    def download(self, api_key: str) -> Path|None:
+    def download(self) -> Path|None:
         endpoint = URL.get_snapshot(self.account_id, self.name, self.key)
         request = HTTPRequest(
             endpoint, 
             {
-                'Authorization': api_key
+                "Accept-Encoding": "utf-8, gzip, deflate, br, zstd",
+                "Accept": "application/octet-stream",
             },
             {},
             'GET'
             )
+        print(endpoint.host+endpoint.endpoint)
+
         response = request.request()
         if response.status_code != 200:
             print(f'Failed Download({response.status_code}): {self.name}')
+            print(response.read().decode('utf-8'))
             return
         fp = Path.home() / 'downloads' / f'{self.name}.zip'
+        print(fp)
         with open(fp, 'wb') as file:
             while True:
                 buffer = response.read(5*1024*1024)
@@ -51,7 +56,7 @@ class ApplicationSnapshot(BaseSnapshot):
             print(f'Upload app result: {response.status_code}')
 
     def restore(self, api_key: str) -> None:
-        fp = self.download(api_key)
+        fp = self.download()
         if not fp: return
         self.upload(fp, api_key)
 

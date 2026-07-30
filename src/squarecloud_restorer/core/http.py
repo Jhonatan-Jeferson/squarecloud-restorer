@@ -1,10 +1,12 @@
 import socket
 import json
+from urllib import parse
 from uuid import uuid4
 from io import BufferedReader
 from dataclasses import dataclass
-from typing import Any, Generator, Literal, cast, TYPE_CHECKING
+from typing import Any, Generator, Literal, cast
 from ssl import create_default_context, SSLSocket
+from urllib.parse import urlencode, parse_qsl, quote
 
 from .. import __version__
 
@@ -12,14 +14,14 @@ from .. import __version__
 @dataclass(init=True)
 class URL:
     host: str
-    endpoint: str = "/"
+    endpoint: str
 
     def __add__(self, other: str):
         self.endpoint += other
 
     @classmethod
     def get_snapshot_list(cls, scope: Literal['databases', 'applications']):
-        return cls('api.squarecloud.app', f'/v2/users/snapshots?scope={scope}')
+        return cls('api.squarecloud.app', f'/v2/users/snapshots?{urlencode({"scope": scope})}')
     
     @classmethod
     def upload(cls):
@@ -27,7 +29,12 @@ class URL:
 
     @classmethod
     def get_snapshot(cls, account_id: str, name: str, key: str):
-        return cls('snapshots.squarecloud.app', f'/applications/{account_id}/{name}.zip?{key}')
+        account_id = quote(account_id, safe='')
+        name = quote(name, safe='')
+        if not key:
+            return cls('snapshots.squarecloud.app', f'/applications/{account_id}/{name}.zip')
+        query = urlencode(parse_qsl(key, keep_blank_values=True), doseq=True)
+        return cls('snapshots.squarecloud.app', f'/applications/{account_id}/{name}.zip?{query}')
     
     @classmethod
     def restore_database(cls, db_id: str):
@@ -67,7 +74,7 @@ class HTTPResponse:
             buffer += next(self._gen)
         raw_headers, raw_data = buffer.split(b'\r\n\r\n', 1)
         header_lines = raw_headers.split(b'\r\n')
-        _, code, _ = header_lines[0].split(b' ')
+        _, code, *_ = header_lines[0].split(b' ')
         self.status_code = int(code)
         self._data += raw_data
         for line in header_lines[1:]:
@@ -99,7 +106,11 @@ class HTTPResponse:
                 self._data = b''
             buffer_size = buffer_size-len(data)
             gen = cast(Generator[bytes, int|None, None], self._gen)
-            if buffer_size > 0: return data+gen.send(buffer_size)
+            if buffer_size > 0: 
+                try: 
+                    return data+gen.send(buffer_size)
+                except StopIteration:
+                    return None
             return data
             
     def close(self):
@@ -109,12 +120,15 @@ class HTTPRequest:
     MAX_CHUNK_SIZE: int = 5*1024*1024
     def __init__(self, url: URL, headers: dict[str, Any], data: dict[str, Any]|BufferedReader, method: str):
         self._socket: None|SSLSocket = None
-        self.headers: dict[str, Any] = {
+        default_headers = {
             "Host": url.host,
             "User-Agent": f"squarecloud-restorer/{__version__}",
             "Accept": "application/json, application/octet-stream",
-            "Connection": "close"
-        } | headers
+            "Accept-Language": "pt-BR,pt;q=0.9,en-US;q=0.8,en;q=0.7",
+            "Connection": "close",
+            "Cache-Control": "no-cache",
+        }
+        self.headers: dict[str, Any] = {**default_headers, **headers}
         self.data = data
         self.url = url
         self.method = method.upper()
@@ -128,6 +142,7 @@ class HTTPRequest:
 
     def _parse_headers(self) -> bytes:
         request_line = f"{self.method} {self.url.endpoint} HTTP/1.1"
+        print(request_line)
         lines: list[str] = [request_line]
         if 'Host' not in self.headers:
             self.headers['Host'] = self.url.host
@@ -185,10 +200,14 @@ class HTTPRequest:
                 sock.sendall(form_data_end)
             else:
                 data = json.dumps(self.data).encode('utf-8')
-                self.headers.setdefault('Content-Type', 'application/json')
-                self.headers['Content-Length'] = len(data)
-                headers = self._parse_headers()
-                sock.sendall(headers + data)
+                if len(data) == 2: 
+                    headers = self._parse_headers()
+                    sock.sendall(headers)
+                else: 
+                    self.headers.setdefault('Content-Type', 'application/json')
+                    self.headers['Content-Length'] = len(data)
+                    headers = self._parse_headers()
+                    sock.sendall(headers + data)
         except Exception as e:
             sock.close()
             raise e
